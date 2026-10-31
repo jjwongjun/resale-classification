@@ -2,9 +2,10 @@ file_path: './data/resale_transactions_categorised.csv'
 target_column: price_category
 val_test_size: 0.2
 val_size: 0.5
+random_state: 42
 logreg_param_grid:
   classifier__C: [0.001, 0.01, 0.1, 1.0, 10, 100, 1000]
-  classifier__penalty: ['l2', None]
+  classifier__penalty: ['l2', null]
 knn_param_grid:
   classifier__n_neighbors: [3, 5, 7, 9, 11, 15]
   classifier__weights: ['uniform', 'distance'] 
@@ -12,8 +13,11 @@ dt_param_grid:
   classifier__max_depth: [3, 5, 7, 10]
   classifier__min_samples_split: [2, 5, 10]
   classifier__min_samples_leaf: [1, 2, 4]
+hgb_param_grid:
+  classifier__learning_rate: [0.05, 0.1]
+  classifier__max_iter: [200, 400]
 cv: 5
-scoring: accuracy
+scoring: roc_auc
 numerical_features:
   - floor_area_sqm
   - remaining_lease_months
@@ -34,4 +38,4 @@ flat_type_categories:
   - 4 ROOM
   - 5 ROOM
   - MULTI-GENERATION
-  - EXECUTIVE
+  - EXECUTIVE

@@ -6,6 +6,7 @@ from typing import Any, Dict
 # Related third-party imports
 import pandas as pd
 from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, StandardScaler
 
@@ -46,8 +47,19 @@ class DataPreparation:
         pd.DataFrame: The cleaned DataFrame.
         """
         logging.info("Starting data cleaning.")
-        df.drop_duplicates(inplace=True)
-        df["flat_type"].replace("FOUR ROOM", "4 ROOM", inplace=True)
+        if df.empty:
+            raise ValueError("Input DataFrame is empty.")
+        target = self.config["target_column"]
+        missing_columns = {target, "flat_type", "storey_range"} - set(df.columns)
+        if missing_columns:
+            raise ValueError(f"Input data is missing columns: {missing_columns}")
+        df = df.copy()
+        self._log_data_summary(df)
+        rows_before = len(df)
+        df = df.drop_duplicates()
+        logging.info(f"Removed {rows_before - len(df)} duplicate rows.")
+        df["flat_type"] = df["flat_type"].replace("FOUR ROOM", "4 ROOM")
+        # Some lease_commence_date values are stored as negative years (entry error)
         df["lease_commence_date"] = df["lease_commence_date"].abs()
         df["storey_range"] = df["storey_range"].apply(self._convert_storey_range)
         df = self._fill_missing_names(df, "town_id", "town_name")
@@ -61,9 +73,38 @@ class DataPreparation:
             self._extract_lease_info
         )
         df.drop(columns=["remaining_lease", "block", "street_name"], inplace=True)
-        df['price_category'] = df['price_category'].map({'Above Median': 1, 'Below Median': 0})
+        # Encode the target; unexpected labels raise an error instead of silently becoming NaN
+        target_labels = {"Above Median": 1, "Below Median": 0}
+        unexpected = set(df[target].unique()) - set(target_labels)
+        if unexpected:
+            raise ValueError(f"Unexpected labels in '{target}': {unexpected}")
+        df[target] = df[target].map(target_labels)
+        logging.info(
+            f"Target distribution:\n{df[target].value_counts(normalize=True).round(3)}"
+        )
         logging.info("Data cleaning completed.")
         return df
+
+    @staticmethod
+    def _log_data_summary(df: pd.DataFrame) -> None:
+        """
+        Logs a short data validation report: duplicates, missing values and
+        the number of unique values in each categorical column.
+
+        Args:
+        -----
+        df (pd.DataFrame): The raw DataFrame to summarise.
+        """
+        logging.info(f"Raw data shape: {df.shape}")
+        logging.info(f"Duplicate rows found: {df.duplicated().sum()}")
+        missing = df.isna().sum()
+        missing = missing[missing > 0]
+        if missing.empty:
+            logging.info("No missing values found.")
+        else:
+            logging.info(f"Missing values per column: {missing.to_dict()}")
+        for column in df.select_dtypes(include=["object", "string"]).columns:
+            logging.info(f"Unique values in '{column}': {df[column].nunique()}")
 
     def _create_preprocessor(self) -> ColumnTransformer:
         """
@@ -73,12 +114,21 @@ class DataPreparation:
         --------
         sklearn.compose.ColumnTransformer: A ColumnTransformer object for preprocessing the data.
         """
-        numerical_transformer = Pipeline(steps=[("scaler", StandardScaler())])
+        numerical_transformer = Pipeline(
+            steps=[
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+            ]
+        )
         nominal_transformer = Pipeline(
-            steps=[("onehot", OneHotEncoder(handle_unknown="ignore"))]
+            steps=[
+                ("imputer", SimpleImputer(strategy="most_frequent")),
+                ("onehot", OneHotEncoder(handle_unknown="ignore")),
+            ]
         )
         ordinal_transformer = Pipeline(
             steps=[
+                ("imputer", SimpleImputer(strategy="most_frequent")),
                 (
                     "ordinal",
                     OrdinalEncoder(
@@ -97,6 +147,7 @@ class DataPreparation:
                 ("pass", "passthrough", self.config["passthrough_features"]),
             ],
             remainder="passthrough",
+            sparse_threshold=0,  # dense output so tree-based models can be used
             n_jobs=-1,
         )
         return preprocessor
@@ -173,4 +224,4 @@ class DataPreparation:
             years = 0
         months = int(months_match.group(1)) if months_match else 0
         total_months = years * 12 + months
-        return total_months
+        return total_months
